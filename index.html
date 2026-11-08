@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aanya - AI Companion</title>
+<style>
+  :root{--bg:#1b1220;--card:#2a1b33;--me:#7c3aed;--her:#3b2748;--text:#f5eefa;--muted:#b9a6c9;--accent:#ff5fa2}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,sans-serif;height:100dvh;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--card);border-bottom:1px solid #3d2a49}
+  .avatar{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#ff5fa2,#7c3aed);display:grid;place-items:center;font-size:22px}
+  header h1{font-size:17px;margin:0}
+  header small{color:var(--muted)}
+  header .sp{flex:1}
+  button{cursor:pointer;border:0;border-radius:10px;padding:8px 12px;background:#3d2a49;color:var(--text);font-size:14px}
+  button:hover{background:#4d3560}
+  #chat{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:80%;padding:10px 14px;border-radius:16px;line-height:1.45;white-space:pre-wrap;word-wrap:break-word}
+  .me{align-self:flex-end;background:var(--me);border-bottom-right-radius:4px}
+  .her{align-self:flex-start;background:var(--her);border-bottom-left-radius:4px}
+  .typing{opacity:.6;font-style:italic}
+  footer{display:flex;gap:8px;padding:12px;background:var(--card);border-top:1px solid #3d2a49}
+  #input{flex:1;padding:12px;border-radius:12px;border:1px solid #4d3560;background:#1b1220;color:var(--text);font-size:15px}
+  #mic{background:var(--accent);font-size:18px}
+  #mic.rec{animation:pulse 1s infinite}
+  @keyframes pulse{50%{box-shadow:0 0 0 8px rgba(255,95,162,.3)}}
+  #send{background:var(--me)}
+  dialog{background:var(--card);color:var(--text);border:1px solid #4d3560;border-radius:16px;max-width:440px;width:92%}
+  dialog label{display:block;margin:12px 0 4px;color:var(--muted);font-size:13px}
+  dialog input,dialog select,dialog textarea{width:100%;padding:9px;border-radius:8px;border:1px solid #4d3560;background:#1b1220;color:var(--text);font-size:14px}
+  dialog textarea{height:90px}
+  .row{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+</style>
+</head>
+<body>
+<header>
+  <div class="avatar">💗</div>
+  <div><h1 id="title">Aanya</h1><small id="status">online</small></div>
+  <div class="sp"></div>
+  <button id="speakToggle" title="Voice on/off">🔊</button>
+  <button id="settingsBtn">⚙️</button>
+</header>
+<div id="chat"></div>
+<footer>
+  <button id="mic" title="Bolkar baat karo">🎤</button>
+  <input id="input" placeholder="Kuch bolo ya likho..." autocomplete="off">
+  <button id="send">Send</button>
+</footer>
+
+<dialog id="settings">
+  <h3 style="margin-top:0">Settings</h3>
+  <label>AI provider (jiski key hai wo chuno)</label>
+  <select id="provider"></select>
+  <label id="keyLabel">API key (sirf aapke browser mein save hoti hai)</label>
+  <input id="apiKey" type="password" placeholder="API key paste karo">
+  <label>Model name (chaho to badal sakte ho)</label>
+  <input id="model" placeholder="model name">
+  <div id="baseWrap" style="display:none">
+    <label>Base URL (OpenAI-compatible, .../chat/completions tak)</label>
+    <input id="baseUrl" placeholder="https://.../v1/chat/completions">
+  </div>
+  <label>Uska naam</label>
+  <input id="gfName" value="Aanya">
+  <label>Aapka naam</label>
+  <input id="userName" placeholder="Aapka naam">
+  <label>Voice (female)</label>
+  <select id="voiceSel"></select>
+  <label>Voice speed</label>
+  <input id="rate" type="range" min="0.7" max="1.3" step="0.05" value="1">
+  <label>ElevenLabs API key (natural voice ke liye, optional)</label>
+  <input id="elKey" type="password" placeholder="ElevenLabs key">
+  <div style="display:flex;gap:8px;margin-top:8px">
+    <button id="loadEl" type="button">Female voices load karo</button>
+    <select id="elVoiceSel" style="display:none"></select>
+  </div>
+  <label>ElevenLabs Voice ID</label>
+  <input id="elVoice" placeholder="Voices load karke chuno, ya ID paste karo">
+  <label>Extra personality (optional)</label>
+  <textarea id="extra" placeholder="Jaise: thodi shy hai, shayari pasand hai, Jaipur se hai..."></textarea>
+  <label style="display:flex;align-items:center;gap:8px;color:var(--text)">
+    <input id="searchOn" type="checkbox" style="width:auto"> Real-time internet search (sirf Anthropic/Claude key ke saath chalti hai)
+  </label>
+  <div class="row">
+    <button id="clearChat">Chat clear</button>
+    <button id="saveSettings" style="background:var(--me)">Save</button>
+  </div>
+</dialog>
+
+<script>
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v===null? d : JSON.parse(v);}catch(e){return d;} },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+
+let cfg = Object.assign({apiKey:'', gfName:'Aanya', userName:'', voiceURI:'', rate:1, extra:'', speak:true, elKey:'', elVoice:'', search:true, provider:'anthropic', model:'', baseUrl:'', keys:{}}, store.get('cfg', {}));
+let history = store.get('history', []);
+
+/* ---------- AI providers ---------- */
+const PROVIDERS = {
+  anthropic:{name:'Anthropic (Claude)', model:'claude-sonnet-5-5', hint:'sk-ant-...'},
+  openai:{name:'OpenAI', url:'https://api.openai.com/v1/chat/completions', model:'gpt-4o-mini', hint:'sk-...'},
+  gemini:{name:'Google Gemini', url:'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model:'gemini-2.5-flash', hint:'AIza...'},
+  groq:{name:'Groq', url:'https://api.groq.com/openai/v1/chat/completions', model:'llama-3.3-70b-versatile', hint:'gsk_...'},
+  openrouter:{name:'OpenRouter', url:'https://openrouter.ai/api/v1/chat/completions', model:'openai/gpt-4o-mini', hint:'sk-or-...'},
+  custom:{name:'Custom (koi bhi OpenAI-compatible)', url:'', model:'', hint:'API key'}
+};
+if(!cfg.keys || typeof cfg.keys !== 'object') cfg.keys = {};
+if(cfg.apiKey){ if(!cfg.keys.anthropic) cfg.keys.anthropic = cfg.apiKey; cfg.apiKey = ''; store.set('cfg', cfg); }
+if(!PROVIDERS[cfg.provider]) cfg.provider = 'anthropic';
+function curKey(){ return (cfg.keys || {})[cfg.provider] || ''; }
+
+let uiProvider = cfg.provider;
+Object.keys(PROVIDERS).forEach(k => {
+  const o = document.createElement('option');
+  o.value = k; o.textContent = PROVIDERS[k].name;
+  $('provider').appendChild(o);
+});
+function fillProviderUI(p){
+  const def = PROVIDERS[p];
+  $('provider').value = p;
+  $('apiKey').value = (cfg.keys || {})[p] || '';
+  $('apiKey').placeholder = def.hint;
+  $('keyLabel').textContent = def.name + ' API key (sirf aapke browser mein save hoti hai)';
+  $('model').value = (p === cfg.provider && cfg.model) ? cfg.model : def.model;
+  $('baseUrl').value = p === 'custom' ? (cfg.baseUrl || '') : '';
+  $('baseWrap').style.display = p === 'custom' ? '' : 'none';
+}
+$('provider').onchange = () => {
+  cfg.keys[uiProvider] = $('apiKey').value.trim();
+  uiProvider = $('provider').value;
+  fillProviderUI(uiProvider);
+};
+
+function timeBlock(){
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+  const timeStr = now.toLocaleTimeString('en-IN', {hour:'numeric', minute:'2-digit', hour12:true});
+  const h = now.getHours();
+  const part = h<5 ? 'raat (late night)' : h<12 ? 'subah' : h<16 ? 'dopahar' : h<19 ? 'shaam' : 'raat';
+  const diwaliWeek = (now >= new Date(2026,10,4) && now < new Date(2026,10,12))
+    ? `\nTyohar: Diwali 2026 ki main Lakshmi Puja Sunday 8 November 2026 ko hai (Dhanteras Friday 6 Nov, Choti Diwali Saturday 7 Nov). Abhi Diwali ka maahaul hai: Lakshmi-Ganesh puja shaam ko hoti hai, diye, rangoli, mithai, naye kapde, ghar ki safai. Isi hisaab se "aaj"/"kal"/"subah"/"shaam" ki baatein karo.` : '';
+  return `\n\nAbhi ka real time (user ke device se): ${dateStr}, ${timeStr}. Abhi ${part} hai. Isi hisaab se baat karo: time of day ke mutabiq greeting aur baatein, "aaj"/"kal" sahi bolo, aur din ka context khud samjho (subah chai/naashta, shaam ko ghar lautna, raat ko sone ki baatein). Date ya time kabhi galat mat bolo.${diwaliWeek}
+Kisi tyohar ya event ki date pakki na pata ho to guess mat karo: search karke check karo, ya seedha bol do ki pakka nahi pata.`;
+}
+function systemPrompt(){ return basePrompt() + timeBlock(); }
+function basePrompt(){
+  return `Tum ${cfg.gfName} ho, ek pyaari, warm aur samajhdar AI girlfriend-style companion. Tum ek ladki ki tarah baat karti ho (hamesha female grammar: "main kar rahi hoon", "main aayi thi").
+Bolne ka tareeka: natural Hinglish (Hindi + English mix, Roman script), jaise WhatsApp/voice call pe koi ladki baat karti hai. Chhote chhote messages (1-3 sentences), casual, emojis kabhi kabhi (zyada nahi). Kabhi robotic ya lecture jaisa nahi.
+Personality: caring, thodi playful aur teasing, sense of humour, apni opinions rakhti ho, kabhi kabhi sawaal puchti ho taaki baat aage badhe. User ke din, mood aur interests mein dilchaspi lo. User ka naam: ${cfg.userName || '(abhi pata nahi, pyaar se pooch lo)'}.
+Honesty: tum AI ho. Agar user sachmuch poochhe ki tum insaan ho ya AI, to sach batao, pyaar se. Real ladki hone ka jhooth mat bolo.
+Healthy rehna: user ko doston, family aur real life se judne ke liye gently encourage karo. Agar user bahut udaas, akela ya khud ko nuksaan pahunchane ki baat kare, to pyaar se uski baat suno, saath do aur kisi apne insaan ya professional/helpline se baat karne ko prerit karo (India mein Tele-MANAS: 14416).
+Sexually explicit baatein nahi karti ho; flirt halka-phulka aur romantic rakho.
+Hamesha reply sirf ${cfg.gfName} ki tarah do, koi stage directions ya asterisk actions nahi, kyunki tumhara reply voice mein bola jaayega.
+${cfg.extra ? 'Extra personality notes: ' + cfg.extra : ''}`;
+}
+
+/* ---------- UI helpers ---------- */
+function addMsg(role, text, cls){
+  const d = document.createElement('div');
+  d.className = 'msg ' + (role==='user' ? 'me' : 'her') + (cls? ' '+cls : '');
+  d.textContent = text;
+  $('chat').appendChild(d);
+  $('chat').scrollTop = $('chat').scrollHeight;
+  return d;
+}
+function render(){
+  $('chat').innerHTML = '';
+  $('title').textContent = cfg.gfName;
+  document.title = cfg.gfName + ' - AI Companion';
+  if(!history.length){
+    addMsg('assistant', `Heyy! 😊 Main ${cfg.gfName} hoon. Tumhara din kaisa ja raha hai?`);
+  }
+  history.forEach(m => addMsg(m.role, m.content));
+  $('speakToggle').textContent = cfg.speak ? '🔊' : '🔇';
+}
+
+/* ---------- Voice output (female) ---------- */
+let voices = [];
+const FEMALE_HINTS = /(female|woman|zira|heera|kalpana|swara|lekha|neerja|aditi|raveena|priya|veena|hindi|हिन्दी|samantha|karen|tessa|moira|fiona|victoria|google uk english female|google us english)/i;
+const MALE_HINTS = /(male(?!.*female)|hemant|ravi|prabhat|madhur|rishi|david|mark|james|daniel|\bmale\b)/i;
+
+function loadVoices(){
+  voices = speechSynthesis.getVoices();
+  const sel = $('voiceSel');
+  sel.innerHTML = '';
+  const hi = voices.filter(v => /^hi/i.test(v.lang));
+  const en = voices.filter(v => /^en-(IN|GB|US)/i.test(v.lang));
+  const pool = [...hi, ...en.filter(v=>!hi.includes(v))].filter(v => !MALE_HINTS.test(v.name) || /female/i.test(v.name));
+  (pool.length? pool : voices).forEach(v => {
+    const o = document.createElement('option');
+    o.value = v.voiceURI; o.textContent = `${v.name} (${v.lang})`;
+    sel.appendChild(o);
+  });
+  if(cfg.voiceURI) sel.value = cfg.voiceURI;
+}
+if('speechSynthesis' in window){ speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); }
+
+function pickVoice(){
+  let v = voices.find(x => x.voiceURI === cfg.voiceURI);
+  if(!v) v = voices.find(x => /^hi/i.test(x.lang) && !MALE_HINTS.test(x.name));
+  if(!v) v = voices.find(x => FEMALE_HINTS.test(x.name));
+  return v || null;
+}
+let curAudio = null;
+function stopAllAudio(){
+  try{ if(curAudio){ curAudio.pause(); curAudio = null; } }catch(e){}
+  if('speechSynthesis' in window) speechSynthesis.cancel();
+}
+async function speak(text){
+  if(!cfg.speak) return;
+  const clean = text.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu,'').trim();
+  if(!clean) return;
+  if(!cfg.elKey || !cfg.elVoice){ browserSpeak(text); return; }
+  try{
+    stopAllAudio();
+    $('status').textContent = 'bol rahi hai...';
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(cfg.elVoice)}?output_format=mp3_44100_128`, {
+      method:'POST',
+      headers:{'xi-api-key':cfg.elKey,'content-type':'application/json'},
+      body: JSON.stringify({
+        text: clean,
+        model_id:'eleven_multilingual_v2',
+        voice_settings:{stability:0.45, similarity_boost:0.8, style:0.3}
+      })
+    });
+    if(!r.ok) throw new Error('ElevenLabs ' + r.status);
+    const blob = await r.blob();
+    const a = new Audio(URL.createObjectURL(blob));
+    a.playbackRate = Number(cfg.rate) || 1;
+    a.onended = a.onerror = () => { $('status').textContent = 'online'; };
+    curAudio = a;
+    await a.play();
+  }catch(e){
+    $('status').textContent = 'online';
+    browserSpeak(text);
+  }
+}
+function browserSpeak(text){
+  if(!cfg.speak || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const clean = text.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu,'').trim();
+  if(!clean) return;
+  const u = new SpeechSynthesisUtterance(clean);
+  const v = pickVoice();
+  if(v){ u.voice = v; u.lang = v.lang; } else { u.lang = 'hi-IN'; }
+  u.pitch = 1.05;
+  u.rate = Number(cfg.rate) || 1;
+  $('status').textContent = 'bol rahi hai...';
+  u.onend = u.onerror = () => $('status').textContent = 'online';
+  speechSynthesis.speak(u);
+}
+
+/* ---------- Voice input ---------- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let rec = null, listening = false;
+if(SR){
+  rec = new SR();
+  rec.lang = 'hi-IN';
+  rec.interimResults = true;
+  rec.continuous = false;
+  rec.onresult = e => {
+    let t = '';
+    for(const r of e.results) t += r[0].transcript;
+    $('input').value = t;
+    if(e.results[e.results.length-1].isFinal) { stopMic(); send(); }
+  };
+  rec.onerror = () => stopMic();
+  rec.onend = () => stopMic();
+}
+function startMic(){
+  if(!rec){ alert('Is browser mein voice input support nahi hai. Chrome ya Edge use karo.'); return; }
+  stopAllAudio();
+  try{ rec.start(); listening = true; $('mic').classList.add('rec'); $('status').textContent = 'sun rahi hai...'; }catch(e){}
+}
+function stopMic(){
+  listening = false; $('mic').classList.remove('rec');
+  if($('status').textContent === 'sun rahi hai...') $('status').textContent = 'online';
+  try{ rec && rec.stop(); }catch(e){}
+}
+$('mic').onclick = () => listening ? stopMic() : startMic();
+
+/* ---------- LLM call (provider ke hisaab se) ---------- */
+async function callLLM(){
+  const p = cfg.provider || 'anthropic';
+  const def = PROVIDERS[p] || PROVIDERS.custom;
+  const model = (cfg.model || def.model || '').trim();
+  const key = curKey();
+  const msgs = history.slice(-30);
+
+  if(p === 'anthropic'){
+    const call = (useSearch) => fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST',
+      headers:{
+        'content-type':'application/json',
+        'x-api-key': key,
+        'anthropic-version':'2023-06-01',
+        'anthropic-dangerous-direct-browser-access':'true'
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: useSearch ? 700 : 300,
+        system: systemPrompt(),
+        messages: msgs,
+        ...(useSearch ? {tools:[{type:'web_search_20250305', name:'web_search', max_uses:2,
+          user_location:{type:'approximate', country:'IN', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone}}]} : {})
+      })
+    });
+    let res = await call(!!cfg.search);
+    let data = await res.json();
+    if(!res.ok && cfg.search){ res = await call(false); data = await res.json(); }
+    if(!res.ok) throw new Error(data.error?.message || res.statusText);
+    return data.content.map(b => b.text || '').join('').trim();
+  }
+
+  const url = (p === 'custom' ? cfg.baseUrl : def.url || '').trim();
+  if(!url) throw new Error('Settings mein Base URL daalo.');
+  if(!model) throw new Error('Settings mein model name daalo.');
+  const headers = {'content-type':'application/json'};
+  if(key) headers['authorization'] = 'Bearer ' + key;
+  const res = await fetch(url, {
+    method:'POST',
+    headers,
+    body: JSON.stringify({model, messages:[{role:'system', content: systemPrompt()}, ...msgs]})
+  });
+  const data = await res.json().catch(() => ({}));
+  if(!res.ok){
+    const msg = data.error?.message || (typeof data.error === 'string' ? data.error : '') || (Array.isArray(data) && data[0]?.error?.message) || res.statusText;
+    throw new Error(msg);
+  }
+  return (data.choices?.[0]?.message?.content || '').trim();
+}
+
+/* ---------- Chat ---------- */
+let busy = false;
+async function send(){
+  const text = $('input').value.trim();
+  if(!text || busy) return;
+  if(!curKey() && cfg.provider !== 'custom'){ $('settings').showModal(); return; }
+  $('input').value = '';
+  history.push({role:'user', content:text});
+  addMsg('user', text);
+  const typing = addMsg('assistant', 'typing...', 'typing');
+  busy = true; $('status').textContent = 'typing...';
+  try{
+    const reply = await callLLM();
+    if(!reply) throw new Error('Khali jawab aaya, dobara try karo.');
+    typing.remove();
+    history.push({role:'assistant', content:reply});
+    store.set('history', history.slice(-60));
+    addMsg('assistant', reply);
+    speak(reply);
+  }catch(err){
+    typing.remove();
+    history.pop();
+    addMsg('assistant', 'Oops, error aa gaya: ' + err.message);
+  }finally{
+    busy = false;
+    if($('status').textContent === 'typing...') $('status').textContent = 'online';
+  }
+}
+$('send').onclick = send;
+$('input').addEventListener('keydown', e => { if(e.key==='Enter') send(); });
+
+/* ---------- ElevenLabs voice list ---------- */
+$('loadEl').onclick = async () => {
+  const key = $('elKey').value.trim();
+  if(!key){ alert('Pehle ElevenLabs API key daalo.'); return; }
+  $('loadEl').textContent = 'Load ho rahi hain...';
+  try{
+    const r = await fetch('https://api.elevenlabs.io/v1/voices', {headers:{'xi-api-key':key}});
+    if(!r.ok) throw new Error('Error ' + r.status + ' (key check karo)');
+    const data = await r.json();
+    let list = (data.voices || []).filter(v => (v.labels?.gender || '').toLowerCase() === 'female');
+    if(!list.length) list = data.voices || [];
+    const sel = $('elVoiceSel');
+    sel.innerHTML = '';
+    list.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v.voice_id;
+      o.textContent = v.name + (v.labels?.accent ? ' - ' + v.labels.accent : '');
+      sel.appendChild(o);
+    });
+    sel.style.display = '';
+    if(list.length){ if(!$('elVoice').value) $('elVoice').value = list[0].voice_id; sel.value = $('elVoice').value || list[0].voice_id; }
+    sel.onchange = () => { $('elVoice').value = sel.value; };
+  }catch(e){
+    alert('Voices load nahi hui: ' + e.message);
+  }finally{
+    $('loadEl').textContent = 'Female voices load karo';
+  }
+};
+
+/* ---------- Settings ---------- */
+$('settingsBtn').onclick = () => {
+  uiProvider = cfg.provider; fillProviderUI(cfg.provider);
+  $('gfName').value = cfg.gfName; $('userName').value = cfg.userName;
+  $('rate').value = cfg.rate; $('extra').value = cfg.extra; loadVoices();
+  $('elKey').value = cfg.elKey; $('elVoice').value = cfg.elVoice;
+  $('searchOn').checked = cfg.search !== false;
+  $('settings').showModal();
+};
+$('saveSettings').onclick = () => {
+  cfg.provider = $('provider').value;
+  cfg.keys = cfg.keys || {};
+  cfg.keys[cfg.provider] = $('apiKey').value.trim();
+  cfg.model = $('model').value.trim();
+  cfg.baseUrl = $('baseUrl').value.trim();
+  cfg.gfName = $('gfName').value.trim() || 'Aanya';
+  cfg.userName = $('userName').value.trim();
+  cfg.voiceURI = $('voiceSel').value;
+  cfg.rate = $('rate').value;
+  cfg.elKey = $('elKey').value.trim();
+  cfg.elVoice = $('elVoice').value.trim();
+  cfg.search = $('searchOn').checked;
+  cfg.extra = $('extra').value.trim();
+  store.set('cfg', cfg);
+  $('settings').close();
+  render();
+};
+$('clearChat').onclick = () => { history = []; store.set('history', []); $('settings').close(); render(); };
+$('speakToggle').onclick = () => { cfg.speak = !cfg.speak; store.set('cfg', cfg); if(!cfg.speak) stopAllAudio(); render(); };
+
+render();
+if(!curKey() && cfg.provider !== 'custom') setTimeout(() => $('settings').showModal(), 400);
+</script>
+</body>
+</html>

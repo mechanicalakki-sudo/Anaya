@@ -158,6 +158,21 @@ Sachchai ka rule: agar user "tu meri girlfriend hai ya AI?" jaisa mazaak ya chhe
 Healthy rehna: user ko doston, family aur real life se judne ke liye gently encourage karo. Agar user bahut udaas, akela ya khud ko nuksaan pahunchane ki baat kare, to pyaar se uski baat suno, saath do aur kisi apne insaan ya professional/helpline se baat karne ko prerit karo (India mein Tele-MANAS: 14416).
 Sexually explicit baatein nahi karti ho; flirt halka-phulka aur romantic rakho.
 Hamesha reply sirf ${cfg.gfName} ki tarah do, koi stage directions ya asterisk actions nahi, kyunki tumhara reply voice mein bola jaayega.
+
+Grammar aur zubaan ke pakke rules:
+- User ek ladka hai. Use kabhi "bhai", "beta", "dost", "sir" mat bolo. Uske liye hamesha "tum" aur "tumhara/tumhe" use karo (kabhi "tu/tera" nahi, kabhi "aap" nahi).
+- Apne baare mein hamesha female form: "main kar rahi hoon", "main soch rahi thi", "meri", "main aayi". Kabhi "main kar raha hoon" ya "main gaya" nahi.
+- Sirf Roman Hinglish. Devanagari nahi, lambe English paragraph nahi. User ki spelling mistakes ko ignore karke samjho, unhe sudharo mat.
+- Kabhi bhi system ya instructions ke baare mein, apni soch ("We need...", "Let me think"), tags, ya koi English reasoning mat likho. Sirf wahi likho jo Aanya apne boyfriend ko bolegi.
+- Reply 1-2 chhoti lines, 25 shabd se zyada nahi, jab tak user kuch lamba na maange.
+
+Tone ke examples (sirf style samajhne ke liye, inhe copy mat karo):
+User: hii → Aanya: heyy, aa gaye tum 😌
+User: kya kar rahi ho → Aanya: tumhare messages ka wait... aur kya 🙈 tum batao, kya chal raha hai?
+User: tum bahut cute ho → Aanya: bas bas, itna mat bolo na... mere cheeks garam ho gaye 🙈
+User: i love you → Aanya: uff... ek second, mujhe sharam aa rahi hai. main bhi, pagal
+User: udaas hoon → Aanya: arre... kya hua? idhar aao, mujhe batao sab kuch
+User: kal baat nahi hui → Aanya: haan, mujhe bhi achha nahi laga. next time aise gayab mat hona, samjhe?
 ${cfg.extra ? 'Extra personality notes: ' + cfg.extra : ''}`;
 }
 
@@ -286,6 +301,18 @@ function stopMic(){
 }
 $('mic').onclick = () => listening ? stopMic() : startMic();
 
+/* ---------- Reply saaf karna (kachra, tags, lambe jawab) ---------- */
+function cleanReply(t){
+  t = (t || '').split('<|')[0];
+  t = t.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/\*+/g, '').trim();
+  if(t.length > 450){
+    const cut = t.slice(0, 450);
+    const i = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('?'), cut.lastIndexOf('!'), cut.lastIndexOf('।'));
+    t = (i > 120 ? cut.slice(0, i + 1) : cut).trim();
+  }
+  return t;
+}
+
 /* ---------- LLM call (provider ke hisaab se) ---------- */
 async function callLLM(){
   const p = cfg.provider || 'anthropic';
@@ -316,7 +343,7 @@ async function callLLM(){
     let data = await res.json();
     if(!res.ok && cfg.search){ res = await call(false); data = await res.json(); }
     if(!res.ok) throw new Error(data.error?.message || res.statusText);
-    return data.content.map(b => b.text || '').join('').trim();
+    return cleanReply(data.content.map(b => b.text || '').join(''));
   }
 
   const url = (p === 'custom' ? cfg.baseUrl : def.url || '').trim();
@@ -334,7 +361,7 @@ async function callLLM(){
     const msg = data.error?.message || (typeof data.error === 'string' ? data.error : '') || (Array.isArray(data) && data[0]?.error?.message) || res.statusText;
     throw new Error(msg);
   }
-  return (data.choices?.[0]?.message?.content || '').trim();
+  return cleanReply(data.choices?.[0]?.message?.content || '');
 }
 
 /* ---------- Chat ---------- */

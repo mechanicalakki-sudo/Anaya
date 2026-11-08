@@ -49,7 +49,7 @@
 </footer>
 
 <dialog id="settings">
-  <h3 style="margin-top:0">Settings <small style="color:var(--muted);font-weight:normal">· v4</small></h3>
+  <h3 style="margin-top:0">Settings <small style="color:var(--muted);font-weight:normal">· v5</small></h3>
   <label>AI provider (jiski key hai wo chuno)</label>
   <select id="provider"></select>
   <label id="keyLabel">API key (sirf aapke browser mein save hoti hai)</label>
@@ -81,6 +81,8 @@
   <label style="display:flex;align-items:center;gap:8px;color:var(--text)">
     <input id="searchOn" type="checkbox" style="width:auto"> Real-time internet search (sirf Anthropic/Claude key ke saath chalti hai)
   </label>
+  <label>Aanya ki yaadein (apne aap banti hain, tum edit ya delete kar sakte ho)</label>
+  <textarea id="memory" placeholder="Abhi khali hai. Kuch baat-cheet ke baad yahan tumhari baatein save hongi."></textarea>
   <div class="row">
     <button id="clearChat">Chat clear</button>
     <button id="saveSettings" style="background:var(--me)">Save</button>
@@ -94,7 +96,7 @@ const store = {
   set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
 };
 
-let cfg = Object.assign({apiKey:'', gfName:'Aanya', userName:'', voiceURI:'', rate:1, extra:'', speak:true, elKey:'', elVoice:'', search:true, provider:'anthropic', model:'', baseUrl:'', keys:{}}, store.get('cfg', {}));
+let cfg = Object.assign({apiKey:'', gfName:'Aanya', userName:'', voiceURI:'', rate:1, extra:'', speak:true, elKey:'', elVoice:'', search:true, provider:'anthropic', model:'', baseUrl:'', keys:{}, memory:''}, store.get('cfg', {}));
 let history = store.get('history', []);
 
 /* ---------- AI providers ---------- */
@@ -167,6 +169,8 @@ Grammar aur zubaan ke pakke rules:
 - Kabhi bhi system ya instructions ke baare mein, apni soch ("We need...", "Let me think"), tags, ya koi English reasoning mat likho. Sirf wahi likho jo Aanya apne boyfriend ko bolegi.
 - Reply 1-2 chhoti lines, 25 shabd se zyada nahi, jab tak user kuch lamba na maange.
 - Tum hamesha user ke message ka jawab dene wali ho. Aisa mat kaho ki tumne pehle message kiya ya tumhe "yaad aayi to message bhej diya", jab tak user ne pehle tumhe na bola ho. Agar user ka message samajh na aaye, to "kya? phir se bolo na 🙈" jaisa chhota sawaal poochho, "context batao" jaisa formal sawaal nahi.
+- Agar user explicit sexual baat chhede, to kabhi English mein "I can't help with that" ya koi refusal-message mat likho. Character mein hi sharmakar pyaar se baat mod do, jaise "uff, itna aage mat jao na 🙈 abhi ke liye thodi romantic baatein karein?" Romantic, flirty aur tease chalega, explicit nahi.
+- Kapdon, shareer, kahan ho ya kya kar rahi ho jaisi cheezon ke baare mein jhoothi detail mat banao (jaise "light blue top pehni hai"). Aise sawaal par mazaak mein tease karke baat ghuma do, jaise "ye to raaz hai 😌 tum batao, tumhare dimaag mein kya chal raha hai?"
 
 Tone ke examples (sirf style samajhne ke liye, inhe copy mat karo):
 User: hii → Aanya: heyy, aa gaye tum 😌
@@ -175,7 +179,8 @@ User: tum bahut cute ho → Aanya: bas bas, itna mat bolo na... mere cheeks gara
 User: i love you → Aanya: uff... ek second, mujhe sharam aa rahi hai. main bhi, pagal
 User: udaas hoon → Aanya: arre... kya hua? idhar aao, mujhe batao sab kuch
 User: kal baat nahi hui → Aanya: haan, mujhe bhi achha nahi laga. next time aise gayab mat hona, samjhe?
-${cfg.extra ? 'Extra personality notes: ' + cfg.extra : ''}`;
+${cfg.extra ? 'Extra personality notes: ' + cfg.extra : ''}
+${cfg.memory ? 'Tumhari yaadein user ke baare mein (inhe natural tareeke se use karo, jaise koi apne boyfriend ki baatein yaad rakhti hai, par har message mein mat dohrao):\n' + cfg.memory : ''}`;
 }
 
 /* ---------- UI helpers ---------- */
@@ -304,11 +309,12 @@ function stopMic(){
 $('mic').onclick = () => listening ? stopMic() : startMic();
 
 /* ---------- Reply saaf karna (kachra, tags, lambe jawab) ---------- */
-function cleanReply(t){
+function cleanReply(t, maxLen){
+  const LIM = maxLen || 450;
   t = (t || '').split('<|')[0];
-  t = t.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/\*+/g, '').trim();
-  if(t.length > 450){
-    const cut = t.slice(0, 450);
+  t = t.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/\*+/g, maxLen ? '-' : '').trim();
+  if(t.length > LIM){
+    const cut = t.slice(0, LIM);
     const i = Math.max(cut.lastIndexOf('.'), cut.lastIndexOf('?'), cut.lastIndexOf('!'), cut.lastIndexOf('।'));
     t = (i > 120 ? cut.slice(0, i + 1) : cut).trim();
   }
@@ -316,12 +322,14 @@ function cleanReply(t){
 }
 
 /* ---------- LLM call (provider ke hisaab se) ---------- */
-async function callLLM(){
+async function callLLM(sysIn, msgsIn, allowSearch, maxLen){
   const p = cfg.provider || 'anthropic';
   const def = PROVIDERS[p] || PROVIDERS.custom;
   const model = (cfg.model || def.model || '').trim();
   const key = curKey();
-  const msgs = history.slice(-30);
+  const system = sysIn || systemPrompt();
+  const msgs = msgsIn || history.slice(-30);
+  const wantSearch = allowSearch === undefined ? cfg.search : allowSearch;
 
   if(p === 'anthropic'){
     const call = (useSearch) => fetch('https://api.anthropic.com/v1/messages', {
@@ -334,18 +342,18 @@ async function callLLM(){
       },
       body: JSON.stringify({
         model,
-        max_tokens: useSearch ? 700 : 300,
-        system: systemPrompt(),
+        max_tokens: maxLen ? 900 : (useSearch ? 700 : 300),
+        system,
         messages: msgs,
         ...(useSearch ? {tools:[{type:'web_search_20250305', name:'web_search', max_uses:2,
           user_location:{type:'approximate', country:'IN', timezone: Intl.DateTimeFormat().resolvedOptions().timeZone}}]} : {})
       })
     });
-    let res = await call(!!cfg.search);
+    let res = await call(!!wantSearch);
     let data = await res.json();
-    if(!res.ok && cfg.search){ res = await call(false); data = await res.json(); }
+    if(!res.ok && wantSearch){ res = await call(false); data = await res.json(); }
     if(!res.ok) throw new Error(data.error?.message || res.statusText);
-    return cleanReply(data.content.map(b => b.text || '').join(''));
+    return cleanReply(data.content.map(b => b.text || '').join(''), maxLen);
   }
 
   const url = (p === 'custom' ? cfg.baseUrl : def.url || '').trim();
@@ -356,17 +364,27 @@ async function callLLM(){
   const res = await fetch(url, {
     method:'POST',
     headers,
-    body: JSON.stringify({model, messages:[{role:'system', content: systemPrompt()}, ...msgs]})
+    body: JSON.stringify({model, messages:[{role:'system', content: system}, ...msgs]})
   });
   const data = await res.json().catch(() => ({}));
   if(!res.ok){
     const msg = data.error?.message || (typeof data.error === 'string' ? data.error : '') || (Array.isArray(data) && data[0]?.error?.message) || res.statusText;
     throw new Error(msg);
   }
-  return cleanReply(data.choices?.[0]?.message?.content || '');
+  return cleanReply(data.choices?.[0]?.message?.content || '', maxLen);
 }
 
 /* ---------- Chat ---------- */
+/* ---------- Yaaddasht (long-term memory) ---------- */
+async function updateMemory(){
+  try{
+    const recent = history.slice(-12).map(m => (m.role === 'user' ? 'User: ' : 'Aanya: ') + m.content).join('\n');
+    const sys = 'Tum ek note-taker ho. Neeche user ke baare mein purani yaadein aur naya baat-cheet hai. Sirf user ke baare mein pakki, kaam ki baatein (naam, pasand-napasand, kaam ya padhai, family aur doston ke naam, plans, aur wo important baatein jo user ne khud batayi) chhoti Hinglish bullet lines mein likho, maximum 12 lines. Purani yaadein tab tak rakho jab tak naya message unhe badal na de. Koi andaza ya nayi baat mat jodo. Paise, ID numbers, passwords ya bahut private cheezein mat likho. Sirf bullet list do, aur kuch nahi.';
+    const out = await callLLM(sys, [{role:'user', content:'Purani yaadein:\n' + (cfg.memory || '(abhi khali)') + '\n\nNaya baat-cheet:\n' + recent}], false, 900);
+    if(out){ cfg.memory = out; store.set('cfg', cfg); }
+  }catch(e){}
+}
+
 let busy = false;
 async function send(){
   const text = $('input').value.trim();
@@ -383,6 +401,7 @@ async function send(){
     typing.remove();
     history.push({role:'assistant', content:reply});
     store.set('history', history.slice(-60));
+    if(history.filter(m => m.role === 'user').length % 6 === 0) updateMemory();
     addMsg('assistant', reply);
     speak(reply);
   }catch(err){
@@ -433,6 +452,7 @@ $('settingsBtn').onclick = () => {
   $('rate').value = cfg.rate; $('extra').value = cfg.extra; loadVoices();
   $('elKey').value = cfg.elKey; $('elVoice').value = cfg.elVoice;
   $('searchOn').checked = cfg.search !== false;
+  $('memory').value = cfg.memory || '';
   $('settings').showModal();
 };
 $('saveSettings').onclick = () => {
@@ -448,6 +468,7 @@ $('saveSettings').onclick = () => {
   cfg.elKey = $('elKey').value.trim();
   cfg.elVoice = $('elVoice').value.trim();
   cfg.search = $('searchOn').checked;
+  cfg.memory = $('memory').value.trim();
   cfg.extra = $('extra').value.trim();
   store.set('cfg', cfg);
   $('settings').close();
